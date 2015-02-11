@@ -211,6 +211,8 @@ if __name__ == '__main__':
     # pdb.set_trace()
     # board = LockGPU()
     # print 'Using board', board
+    cm.cublas_init()
     cm.CUDAMatrix.init_random(0)
     main()
+    cm.cublas_shutdown()
     # FreeGPU(board)
