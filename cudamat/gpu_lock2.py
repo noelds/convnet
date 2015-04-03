@@ -5,7 +5,7 @@ A simple discretionary locking system for /dev/nvidia devices.
 
 Iain Murray, November 2009, January 2010.
 
--- Additions -- Charlie Tang, Jan, 2011: 
+-- Additions -- Charlie Tang, Jan, 2011:
 added display of GPU usages
 
 -- Charlie Tang, July, 2011:
@@ -24,12 +24,12 @@ _dev_prefix = '/dev/nvidia'
 # a quick and dirty way that works for now:
 def board_ids():
     """Returns integer board ids available on this machine."""
-    from glob import glob
-    board_devs = glob(_dev_prefix + '[0-9]*')
-    return range(len(board_devs))
-    #p = Popen(['/u/tang/bin/get_num_gpu_boards'], stdout=PIPE)    
-    #nBoards = int(p.stdout.read())
-    #return range(nBoards)
+    #from glob import glob
+    #board_devs = glob(_dev_prefix + '[0-9]*')
+    #return range(len(board_devs))
+    p = Popen(['/u/tang/bin/get_num_gpu_boards'], stdout=PIPE)
+    nBoards = int(p.stdout.read())
+    return range(nBoards)
 
 def _lock_file(id):
     """lock file from integer id"""
@@ -70,7 +70,7 @@ def _launch_reaper(id, pid):
         myloc = os.getcwd()
     reaper_cmd = os.path.join(myloc, 'run_on_me_or_pid_quit')
     Popen([reaper_cmd, str(pid), me, '--free', str(id)],
-        stdout=open('/dev/null', 'w'))
+          stdout=open('/dev/null', 'w'))
 
 def obtain_lock_id(pid=None):
     """
@@ -114,48 +114,52 @@ def free_lock(id):
     except:
         return False
 
-def nvidia_gpu_stats():    
-    p = Popen(['nvidia-smi', '-x', '-a'], stdout=PIPE)    
+def nvidia_gpu_stats():
+    p = Popen(['nvidia-smi', '-x', '-a'], stdout=PIPE)
     output = p.stdout.read().lstrip()
     try:
         doc = parseString(output)
-        gpucounter = 0        
+        gpucounter = 0
         templist = []
         memlist = []
-        uselist = []        
+        uselist = []
         fanlist = []
         doc2 = doc.getElementsByTagName("nvidia_smi_log")[0]
         gpulist = doc2.getElementsByTagName("gpu")
-        for gpu in gpulist:        
-            temp = gpu.getElementsByTagName('temperature')[0]            
+        for gpu in gpulist:
+            temp = gpu.getElementsByTagName('temperature')[0]
             temp2 = temp.getElementsByTagName('gpu_temp')[0]
-            templist.append(str(temp2.firstChild.toxml()))            
-            mem = gpu.getElementsByTagName('memory_usage')[0]               
+            templist.append(str(temp2.firstChild.toxml()))
+            try:
+                mem = gpu.getElementsByTagName('memory_usage')[0]
+            except:
+                mem = gpu.getElementsByTagName('fb_memory_usage')[0]
+
             memtot = mem.getElementsByTagName('total')[0]
             memused = mem.getElementsByTagName('used')[0]
-            memfree = mem.getElementsByTagName('free')[0]            
+            memfree = mem.getElementsByTagName('free')[0]
             memtot_str = str(memtot.firstChild.toxml())
             memused_str = str(memused.firstChild.toxml())
             memfree_str = str(memfree.firstChild.toxml())
-            memtot_float = float(memtot_str[:-3])            
+            memtot_float = float(memtot_str[:-3])
             memused_float = float(memused_str[:-3])
             memfree_float = float(memfree_str[:-3])
             memlist.append('%03.f' % memused_float + '+%03.f' % memfree_float + '=%03.f' % memtot_float + 'Mb')
-            use = gpu.getElementsByTagName('gpu_util')[0]        
+            use = gpu.getElementsByTagName('gpu_util')[0]
             uselist.append(str(use.firstChild.toxml()))
             fan = gpu.getElementsByTagName('fan_speed')[0]
             fanlist.append(str(fan.firstChild.toxml()))
             gpucounter += 1
-                    
+
         return [uselist, memlist, fanlist, templist]
-    except:        
+    except:
         return [ [-9999] * len(board_ids()) ] *4
-       
-         
+
+
 # If run as a program:
 if __name__ == "__main__":
-    
-    div = '  ' + "-" * 90    
+
+    div = '  ' + "-" * 90
     import sys
     me = sys.argv[0]
     # Report
@@ -174,10 +178,10 @@ if __name__ == "__main__":
         print obtain_lock_id(pid)
     elif '--ids' in sys.argv:
         try:
-            id = int(sys.argv[2])            
+            id = int(sys.argv[2])
         except:
             print 'Usage: %s --ids [specific gpu id]' % me
-            sys.exit(1)       
+            sys.exit(1)
         if _obtain_lock(id):
             print id
         else:
@@ -195,35 +199,33 @@ if __name__ == "__main__":
         else:
             owner = owner_of_lock(id)
             if owner:
-                print "Failed to free lock id=%d owned by %s" % (id, owner)        
+                print "Failed to free lock id=%d owned by %s" % (id, owner)
             else:
                 print "Failed to free lock, but it wasn't actually set?"
     elif '--noverbose' in sys.argv:
-        stats = nvidia_gpu_stats()        
+        stats = nvidia_gpu_stats()
         print div
         print "%s board users:" % 'abc'
-        print div       
-        for id in board_ids():         
+        print div
+        for id in board_ids():
             print "      Board %d {Use:%s; Mem:%s; Temp:%s}: %s" % (id, stats[0][id], stats[1][id], stats[2][id], owner_of_lock(id))
         print div + '\n'
     else:
         stats = nvidia_gpu_stats()
-        print div      
-        print '  Usage instructions:\n'        
+        print div
+        print '  Usage instructions:\n'
         print '  To obtain and lock an id: %s --id' % me
         print '  The lock is automatically freed when the parent terminates'
         print
         print "  To get an id that won't be freed: %s --id-to-hog <id>" % me
-        print "  To get a specific id: %s --ids <id>" % me        
-        print                                                   
+        print "  To get a specific id: %s --ids <id>" % me
+        print
         print "  You *must* manually free these ids: %s --free <id>\n" % me
         print '  More info: http://www.cs.toronto.edu/~murray/code/gpu_monitoring/'
-        print '  Report any problems to: tang@cs.toronto.edu'    
+        print '  Report any problems to: tang@cs.toronto.edu'
         print '\n' + div
         print "  NVIDIA board users:"
         print div
-        for id in board_ids():         
+        for id in board_ids():
             print "  Board %d {Use:%s; Mem(used+free=total): %s; Fan:%s; Temp:%s}: %s" % (id, stats[0][id], stats[1][id], stats[2][id], stats[3][id], owner_of_lock(id))
         print div + '\n'
-
-

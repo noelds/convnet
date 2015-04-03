@@ -11,7 +11,7 @@ def AddAtAllLocs(h, b):
   b_shape = b.shape
   h.reshape((-1, num_channels))
   b.reshape((1, -1))
-  assert b.shape[1] == num_channels
+  assert b.shape[1] == num_channels, "{shape} != {channels}".format(shape=b.shape[1], channels=num_channels)
   h.add_row_vec(b)
   h.reshape((batch_size, -1))
   b.reshape(b_shape)
@@ -20,7 +20,8 @@ def AddAtAllLocs3D(h, b):
   batch_size, size_x, size_y, num_channels_mult_size_t = h.shape4d
   num_channels = b.shape[1]
   size_t = num_channels_mult_size_t / num_channels
-  assert size_t * num_channels == num_channels_mult_size_t
+  assert size_t * num_channels == num_channels_mult_size_t, "{shape} != {channels}".format(
+      shape=size_t * num_channels, channels=num_channels_mult_size_t)
   b_shape = b.shape
   h.reshape((-1, num_channels_mult_size_t))
   b.reshape((1, -1))
@@ -51,7 +52,7 @@ def AddUpAllLocs3D(h, b, scaleTargets=0):
   b_shape = b.shape
   h.reshape((-1, num_channels_mult_size_t))
   b.reshape((1, -1))
-  
+
   b.mult(scaleTargets)
   for i in xrange(size_t):
     b.add_sums(h.slice(i*num_channels, (i+1)*num_channels), axis=0)

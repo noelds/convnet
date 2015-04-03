@@ -1,11 +1,23 @@
 import datetime
+import os
 import time
 
+import matplotlib
+
+
+matplotlib.use('Agg')
+# matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 
 from data_handler import *
 
-plt.ion()
+from logging_util import initialize_logger
+
+
+logger = initialize_logger(__name__, 'logs')
+
+# plt.ion()
+plt.ioff()
 
 
 def GetNormalizedImage(image, image_size_y, image_size_x):
@@ -21,15 +33,18 @@ def GetNormalizedImage(image, image_size_y, image_size_x):
     return image2
 
 
-def DisplayImages(image_list, image_size_y, image_size_x, fig=1):
+def DisplayImages(image_prefix, image_list, image_size_y, image_size_x, fig=1):
     images = [GetNormalizedImage(image, image_size_y, image_size_x) for image in image_list]
     num_images = len(images)
     plt.figure(fig)
     plt.clf()
+    # fig = plt.figure()
     for i in xrange(num_images):
         plt.subplot(1, num_images, i + 1)
         plt.imshow(images[i], interpolation="nearest")
-    plt.draw()
+    plt.savefig(image_prefix + '_image.png')
+    # plt.close(fig)
+    # plt.draw()
 
 
 def GetNormalizedWeight(w, w_shape4d, r, c):
@@ -51,10 +66,11 @@ def GetNormalizedWeight(w, w_shape4d, r, c):
     return image
 
 
-def DisplayWeights(weight_list, fig=2):
+def DisplayWeights(image_prefix, weight_list, fig=2):
     num_images = len(weight_list)
     plt.figure(fig)
     plt.clf()
+    # fig = plt.figure()
     for i in xrange(num_images):
         w, w_shape4d = weight_list[i]
         num_output_channels, kernel_size_x, kernel_size_y, num_input_channels = w_shape4d
@@ -70,11 +86,13 @@ def DisplayWeights(weight_list, fig=2):
             plt.axhline(y=y * kernel_size_y - 0.5, xmin=0, xmax=xmax, color=color)
         for x in range(0, c):
             plt.axvline(x=x * kernel_size_x - 0.5, ymin=0, ymax=ymax, color=color)
-    plt.draw()
+    plt.savefig(image_prefix + '_weights.png')
+    # plt.close(fig)
+    # plt.draw()
 
 
 def Save(filename, data_dict):
-    print 'Saving model to', filename
+    logger.info('Saving model to {}'.format(filename))
     f = h5py.File(filename, 'w')
     for key, value in data_dict.items():
         dset = f.create_dataset(key, value.shape, value.dtype)
@@ -82,32 +100,38 @@ def Save(filename, data_dict):
     f.close()
 
 
-def Update(w, dw, dw_history, momentum, eps, l2_decay):
+def Update(w, dw, dw_history, momentum, eps, l2_decay, batch_size):
     dw_history.mult(momentum)
+    dw.div_by_scalar(batch_size)
     if l2_decay != 0:
         dw.add_mult(w, l2_decay)
     dw_history.add_mult(dw, -eps)
     w.add(dw_history)
 
 
-def Train(data_handle, model_filename):
-    print_after = 10
-    display_after = 5
-    save_after = 100
-    max_iter = 10000
-    num_filters = 64
+def Train(data_handle, model_filename, image_prefix, num_filters):
+    print_after = 100
+    display_after = 10000
+    max_iter = 800 * 1000
+
+    save_after = 10000
+
+    num_filters = num_filters
     kernel_size_y = 7
     kernel_size_x = 7
-    stride_y = 2
-    stride_x = 2
-    padding_y = 1
-    padding_x = 1
+    stride_y = 1
+    stride_x = 1
+    padding_y = 3
+    padding_x = 3
+
     momentum = 0.9
-    epsilon = 0.0000001
-    l2_decay = 0.001
+    epsilon = 0.0001
+    l2_decay = 0.0005
     dropprob = 0.0
     noise_scale = 0.1
+
     batch_size, image_size_x, image_size_y, num_input_channels = data_handle.GetBatchShape()
+
     num_inputs = kernel_size_x * kernel_size_y * num_input_channels
     conv_desc = cm.GetConvDesc(num_input_channels, num_filters,
                                kernel_size_y, kernel_size_x, stride_y,
@@ -115,17 +139,20 @@ def Train(data_handle, model_filename):
     images_shape = (batch_size, image_size_x, image_size_y, num_input_channels)
     output_shape = cm.GetOutputShape4D(images_shape, conv_desc)
     filters_shape = (
-    conv_desc.num_output_channels, conv_desc.kernel_size_x, conv_desc.kernel_size_y, conv_desc.num_input_channels)
+        conv_desc.num_output_channels, conv_desc.kernel_size_x, conv_desc.kernel_size_y, conv_desc.num_input_channels)
     num_dims = image_size_y * image_size_x * num_input_channels
 
     v = cm.empty(images_shape)
     v_noise = cm.empty(images_shape)
     v_rec = cm.empty(images_shape)
     deriv_v = cm.empty(images_shape)
+
     w_enc = cm.CUDAMatrix(0.01 * (2 * np.random.rand(num_filters, num_inputs) - 1))
     w_dec = cm.CUDAMatrix(0.01 * (2 * np.random.rand(num_filters, num_inputs) - 1))
     b_enc = cm.CUDAMatrix(np.zeros((1, num_filters)))
     b_dec = cm.CUDAMatrix(np.zeros((1, num_inputs)))
+
+    # btch_size, neur_x neur_y, num_filters
     h = cm.empty(output_shape)
     deriv_h = cm.empty(output_shape)
     w_enc.set_shape4d(filters_shape)
@@ -133,20 +160,26 @@ def Train(data_handle, model_filename):
     dw_enc = cm.empty(filters_shape)
     dw_dec = cm.empty(filters_shape)
     db_enc = cm.empty_like(b_enc)
+    # db_dec = cm.empty_like(b_dec)
 
     dw_enc_history = cm.empty(filters_shape)
     dw_dec_history = cm.empty(filters_shape)
     db_enc_history = cm.empty_like(b_enc)
+    # db_dec_history = cm.empty_like(b_dec)
+
     dw_enc_history.assign(0)
     dw_dec_history.assign(0)
+
     h.assign(0)
     deriv_h.assign(0)
     deriv_v.assign(0)
     v.assign(0)
     v_rec.assign(0)
+
     loss = 0
+    total_loss = 0
     for i in xrange(1, max_iter + 1):
-        sys.stdout.write('\r%d' % i)
+        sys.stdout.write('\r%d ' % i)
         sys.stdout.flush()
 
         # Fprop.
@@ -156,22 +189,36 @@ def Train(data_handle, model_filename):
         v_noise.add(v)
         cc_gemm.convUp(v_noise, w_enc, h, conv_desc)
         cc_gemm.AddAtAllLocs(h, b_enc)
+
         h.lower_bound(0)
-        h.dropout(dropprob, scale=1.0 / (1.0 - dropprob))
+        # h.apply_sigmoid()
+
+        # h.dropout(dropprob, scale=1.0 / (1.0 - dropprob))
+
         cc_gemm.convDown(h, w_dec, v_rec, conv_desc)
 
         # Compute Deriv.
         v_rec.subtract(v, target=deriv_v)
-        loss += deriv_v.euclid_norm() ** 2 / (batch_size * num_dims)
+
+        loss = deriv_v.euclid_norm() ** 2 / (batch_size * num_dims)
+        # if np.isnan(loss):
+        #     logger.info('{}: Loss is NaN. Previous loss was {}'.format(i, total_loss / (i % print_after)))
+        #     break
+
+        total_loss += loss
         if i % print_after == 0:
-            loss /= print_after
-            sys.stdout.write(' Loss %.5f\n' % loss)
-            loss = 0
+            total_loss /= print_after
+            logger.info('{i} Loss: {loss} (current); {avg} (moving average)'.format(i=i,
+                                                                                    loss=loss,
+                                                                                    avg=total_loss))
+            total_loss = 0
 
         # Backprop.
         cc_gemm.convUp(deriv_v, w_dec, deriv_h, conv_desc)
         deriv_h.mult(1.0 / (1.0 - dropprob))
+
         deriv_h.apply_rectified_linear_deriv(h)
+        # deriv_h.apply_logistic_deriv(h)
 
         cc_gemm.AddUpAllLocs(deriv_h, db_enc)
         cc_gemm.convOutp(v_noise, deriv_h, dw_enc, conv_desc)
@@ -179,14 +226,15 @@ def Train(data_handle, model_filename):
 
         # Update weights.
         eps = float(epsilon) / batch_size
-        Update(w_enc, dw_enc, dw_enc_history, momentum, eps, l2_decay)
-        Update(w_dec, dw_dec, dw_dec_history, momentum, eps, l2_decay)
-        Update(b_enc, db_enc, db_enc_history, momentum, eps, 0)
+        Update(w_enc, dw_enc, dw_enc_history, momentum, eps, l2_decay, batch_size)
+        Update(w_dec, dw_dec, dw_dec_history, momentum, eps, l2_decay, batch_size)
+        Update(b_enc, db_enc, db_enc_history, momentum, eps, 0, batch_size)
 
         if i % display_after == 0:
-            DisplayImages([v.asarray()[0, :], v_noise.asarray()[0, :], v_rec.asarray()[0, :], deriv_v.asarray()[0, :]],
+            DisplayImages(image_prefix,
+                          [v.asarray()[0, :], v_noise.asarray()[0, :], v_rec.asarray()[0, :], deriv_v.asarray()[0, :]],
                           image_size_y, image_size_x, fig=1)
-            DisplayWeights([(w_enc.asarray(), w_enc.shape4d), (w_dec.asarray(), w_dec.shape4d)])
+            DisplayWeights(image_prefix, [(w_enc.asarray(), w_enc.shape4d), (w_dec.asarray(), w_dec.shape4d)])
 
         if i % save_after == 0:
             Save(model_filename, {
@@ -196,23 +244,58 @@ def Train(data_handle, model_filename):
                 'b_dec': b_dec.asarray(),
             })
 
+    DisplayImages(image_prefix,
+                  [v.asarray()[42, :], v_noise.asarray()[42, :], v_rec.asarray()[42, :], deriv_v.asarray()[42, :]],
+                  image_size_y, image_size_x, fig=1)
+    DisplayWeights(image_prefix, [(w_enc.asarray(), w_enc.shape4d), (w_dec.asarray(), w_dec.shape4d)])
+
+    Save(model_filename, {
+        'w_enc': w_enc.asarray(),
+        'w_dec': w_dec.asarray(),
+        'b_enc': b_enc.asarray(),
+        'b_dec': b_dec.asarray(),
+    })
+
+    return loss
+
 
 def main():
     st = datetime.datetime.fromtimestamp(time.time()).strftime('%Y%m%d%H%M%S')
-    data_filename = 'cifar_100_train.pkl'
-    mean_filename = 'pixel_mean.pkl'
-    model_filename = 'conv_autonecoder_%s.h5' % st
-    batch_size = 128
-    data_handle = DataHandler(data_filename, mean_filename, 32, 32, 32, 32, batch_size, 128)
-    Train(data_handle, model_filename)
+
+    data_path = os.path.expanduser(os.path.join('~', 'goback', 'data'))
+    dataset_path = os.path.join(data_path, 'coco', 'images')
+
+    data_filename = os.path.join(dataset_path, 'train64.h5')
+    mean_filename = os.path.join(dataset_path, 'train64_statistics.h5')
+
+    batch_size = 100
+    data_handle = DataHandler(data_filename, mean_filename, 64, 64, 64, 64, batch_size, batch_size)
+
+    model_filename = 'ae_5_32_%s_model.h5' % st
+    image_prefix = 'ae_5_32_%s' % st
+    loss32 = Train(data_handle, model_filename, image_prefix, 32)
+
+    model_filename = 'ae_5_64_%s_model.h5' % st
+    image_prefix = 'ae_5_64_%s' % st
+    loss64 = Train(data_handle, model_filename, image_prefix, 64)
+
+    logger.info('Final losses - 32: {}, 64: {}'.format(loss32, loss64))
 
 
 if __name__ == '__main__':
     # pdb.set_trace()
     # board = LockGPU()
     # print 'Using board', board
-    cm.cublas_init()
-    cm.CUDAMatrix.init_random(0)
-    main()
-    cm.cublas_shutdown()
+    # ...
     # FreeGPU(board)
+    board = -1
+    try:
+        # cm.cuda_set_device(2)
+        # cm.cublas_init()
+        board = LockGPU()
+        cm.CUDAMatrix.init_random(0)
+        main()
+    finally:
+        if board > -1:
+            # cm.cublas_shutdown()
+            FreeGPU(board)

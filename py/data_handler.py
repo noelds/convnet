@@ -11,16 +11,12 @@ class DataHandler(object):
                  raw_image_size_y, raw_image_size_x,
                  image_size_y, image_size_x,
                  batch_size, chunk_size):
-        # self.data_file_ = h5py.File(data_filename, 'r')
-        self.data_file_ = unpickle(data_filename)
+        self.data_file_ = h5py.File(data_filename, 'r')
         self.dset_ = self.data_file_['data']
 
-        # with h5py.File(mean_filename, 'r') as mean_file:
-        #     mean = mean_file['pixel_mean'].value.reshape(-1, 1)
-        #     std = mean_file['pixel_std'].value.reshape(-1, 1)
-        mean_file = unpickle(mean_filename)
-        mean = mean_file['pixel_mean'].reshape(-1, 1)
-        std = mean_file['pixel_std'].reshape(-1, 1)
+        with h5py.File(mean_filename, 'r') as mean_file:
+            mean = mean_file['pixel_mean'].value.reshape(-1, 1)
+            std = mean_file['pixel_std'].value.reshape(-1, 1)
 
         numpixels = image_size_y * image_size_x
 
@@ -72,7 +68,8 @@ class DataHandler(object):
             data_cpu = self.dset_[self.chunk_start_:self.chunk_start_ + self.chunk_size_, :]
             self.data_gpu_buffer_.overwrite(data_cpu.T)
             self.chunk_start_ += self.chunk_size_
-            if self.chunk_start_ > self.dataset_size_:
+            # if self.chunk_start_ >= self.dataset_size_:
+            if self.chunk_start_ >= self.dataset_size_ - (self.dataset_size_ % self.batch_size_):
                 self.chunk_start_ = 0
 
         self.x_offset_.fill_with_rand()
@@ -90,3 +87,14 @@ class DataHandler(object):
         v.add_row_mult(self.mean_, -1)
         v.div_by_row(self.std_)
         return v
+
+    def GetSimpleBatch(self, v):
+        data_cpu = self.dset_[self.chunk_start_:self.chunk_start_ + self.chunk_size_, :]
+
+        self.chunk_start_ += self.chunk_size_
+        if self.chunk_start_ >= self.dataset_size_ - (self.dataset_size_ % self.batch_size_):
+            self.chunk_start_ = 0
+
+        v.overwrite(data_cpu)
+        v.add_row_mult(self.mean_, -1)
+        v.div_by_row(self.std_)
